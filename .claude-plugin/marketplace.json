@@ -1,0 +1,15 @@
+{
+  "name": "naoki-skills",
+  "owner": {
+    "name": "Naoki Oshiumi"
+  },
+  "plugins": [
+    {
+      "name": "review-workflow",
+      "source": "./plugins/review-workflow",
+      "description": "言語・FW 非依存のコードレビューチェックリスト(review-checklist)と、それを使うレビュー駆動実装ワークフロー(review-driven-implement)",
+      "version": "1.0.0"
+    }
+  ],
+  "description": "Naoki の Claude Code / Codex 共通 skill(レビューチェックリスト・レビュー駆動実装)"
+}

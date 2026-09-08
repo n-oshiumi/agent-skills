@@ -1,0 +1,6 @@
+{
+  "name": "review-workflow",
+  "description": "言語・FW 非依存のコードレビューチェックリスト(review-checklist)と、それを使うレビュー駆動実装ワークフロー(review-driven-implement)",
+  "version": "1.0.0",
+  "author": { "name": "Naoki Oshiumi" }
+}
