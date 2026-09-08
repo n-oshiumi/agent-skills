@@ -30,7 +30,8 @@ for ref in sorted(glob.glob(os.path.join(ROOT, "plugins", "*", "skills", "*", "r
     size = os.path.getsize(ref)
     rel = os.path.relpath(ref, ROOT)
     text = open(ref, encoding="utf8").read()
-    cand = text.split("## 候補", 1)[1] if "## 候補" in text else ""
+    m = re.search(r"^## 候補.*$", text, re.M)
+    cand = text[m.end():] if m else ""
     n_cand = sum(1 for l in cand.splitlines() if l.startswith("- "))
     info.append(f"{rel}: {size:5d} B, 候補 {n_cand}")
     if size > LIMIT:
