@@ -10,7 +10,7 @@ Claude Code / Codex 共通で使う skill の正本。plugin として配布す�
 ```
 
 リポの `.claude/settings.json` に `extraKnownMarketplaces` と `enabledPlugins` が宣言されていれば、リポを開いたときにインストールを促される。
-plugin 経由の skill は名前空間付き: `/review-workflow:review-checklist`、`/review-workflow:review-driven-implement`。
+plugin 経由の skill は名前空間付き: `/review-workflow:review-checklist`、`/review-workflow:review-driven-implement`、`/review-workflow:spec-design-multireview`(agent は `review-workflow:spec-design-reviewer`)。
 
 ## 使う側(Codex)
 
@@ -20,6 +20,7 @@ plugin 経由の skill は名前空間付き: `/review-workflow:review-checklist
 
 - `review-checklist`: 言語・FW 非依存のレビューチェックリスト(`references/{severity,common,backend,frontend,infra,data,test,process}.md`、各 ≤10KB)。プロジェクト固有の不変条件は各リポ側に置く。
 - `review-driven-implement`: 準備 → 実装+テスト → 自己レビュー → 検証ゲート → 外部レビュー1回 → 完了報告のワークフロー。固有設定は各リポの `.claude/review-driven-implement.project.md`。
+- `spec-design-multireview`(+ agent `spec-design-reviewer`): PRD・設計 Spec を 4 レンズ(リーン / 価値 / UX / 実現性)の並列サブエージェントで批判的にレビューし、P0/P1 ゼロまで収束させる。各リポの `/review-driven-spec` `/review-driven-design` `/spec-design` から呼ばれる。
 
 ## 育てる・配信する
 
