@@ -8,7 +8,7 @@
       "name": "review-workflow",
       "source": "./plugins/review-workflow",
       "description": "言語・FW 非依存のコードレビューチェックリスト(review-checklist)、レビュー駆動実装ワークフロー(review-driven-implement)、PRD・設計 Spec の 4 レンズ並列レビュー(spec-design-multireview + spec-design-reviewer agent)",
-      "version": "1.0.0"
+      "version": "1.1.0"
     }
   ],
   "description": "Naoki の Claude Code / Codex 共通 skill(レビューチェックリスト・レビュー駆動実装)"
