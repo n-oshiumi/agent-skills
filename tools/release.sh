@@ -24,7 +24,8 @@ for p in ["plugins/review-workflow/.claude-plugin/plugin.json",".claude-plugin/m
     else: d["version"]=v
     json.dump(d,open(p,"w"),ensure_ascii=False,indent=2); open(p,"a").write("\n")
 PY
-git add -A && git commit -q -m "release: v$new"$'\n\n'"$log"
+msg=$(printf 'release: v%s\n\n%s' "$new" "$log")
+git add -A && git commit -q -m "$msg"
 git tag "v$new"
 git push -q origin main --tags
 echo "pushed v$new。利用者は次回起動または /plugin update で受け取る。"
