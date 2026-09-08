@@ -28,4 +28,4 @@ msg=$(printf 'release: v%s\n\n%s' "$new" "$log")
 git add -A && git commit -q -m "$msg"
 git tag "v$new"
 git push -q origin main --tags
-echo "pushed v$new。利用者は次回起動または /plugin update で受け取る。"
+echo "pushed v${new}. 利用者は次回起動または /plugin update で受け取る。"
