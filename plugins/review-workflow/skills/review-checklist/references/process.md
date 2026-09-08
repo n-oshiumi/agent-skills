@@ -42,3 +42,4 @@
 - マージ後のブランチ削除・base 反映はツールのメッセージでなく実体(`git branch --list` / `git merge-base --is-ancestor`)で確認する
 - issue は受け入れ基準と突き合わせて完全完了なら close、一部なら close せず残りをコメント。`Closes #n` は書く時点で判定し、残りがあれば `Refs #n`
 - 生成物・スクショ・scratchpad のファイルをコミットしない
+- 「自分には到達手段が無い」と結論して打ち切る前に、リポの docs/specs と skill を検索する。用意されている経路を探していないだけのことが多い(clinic-dashboard 2026-09-08)
