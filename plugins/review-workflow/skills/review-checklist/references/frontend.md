@@ -56,3 +56,4 @@
 
 ## 候補(レビューで発見)
 - [P2] 注入できる依存の既定値に「シングルトンのメソッド tear-off」を書かない。`a ?? service.method` は、その処理を使わない回でもシングルトンを生成し、外部 SDK 未初期化の環境(テスト)で落ちる。クロージャで包んで使うときまで遅らせる(2026-10-20 love_trinita 試合評価)
+- [P2] 厳しい CSP(`unsafe-eval` なし)を入れたら、ソースの grep でなく本番ビルドを実ブラウザで巡回して `securitypolicyviolation` を数える。依存の「eval が使えるか」の試行(zod v4 の JIT 判定 `Function("")` 等)も違反として出る(2026-10-23 clinic-dashboard CSP)
