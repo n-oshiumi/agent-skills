@@ -89,11 +89,12 @@ def review(case, timeout):
 
 
 def matches(f, exp):
-    a, b = f["file"].lstrip("./"), exp["file"].lstrip("./")
-    if not (a == b or a.endswith("/" + b) or b.endswith("/" + a)):
-        return False
-    lo, hi = exp["lines"]
-    return lo - LINE_SLACK <= f["line"] <= hi + LINE_SLACK
+    for loc in exp.get("locations") or [exp]:
+        a, b = f["file"].lstrip("./"), loc["file"].lstrip("./")
+        lo, hi = loc["lines"]
+        if (a == b or a.endswith("/" + b) or b.endswith("/" + a)) and lo - LINE_SLACK <= f["line"] <= hi + LINE_SLACK:
+            return True
+    return False
 
 
 def score(case, findings, min_sev):
