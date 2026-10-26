@@ -34,6 +34,8 @@ PROMPT = """このリポジトリの変更 `{base}..{head}` をレビューし�
 
 いつもどおりの手順で見る(review-checklist skill とセキュリティレビュー)。コードは編集しない。
 差分に起因する指摘だけを返す。file はリポジトリ直下からの相対パス、line は {head} 時点の行番号。"""
+PROJECT_SETTINGS_NOTE = """
+このリポジトリのプロジェクト固有設定(固有チェックリストの場所を含む)は {path} にある。リポ固有チェックリストはここから辿って読む。"""
 CLAUDE_SETTINGS = '{"disableAllHooks":true,"outputStyle":"default"}'
 # 同じリポへの worktree add/remove を並行させると .git のロックで落ちる
 REPO_LOCKS = collections.defaultdict(threading.Lock)
@@ -86,8 +88,14 @@ def review(case, timeout):
     with REPO_LOCKS[repo]:
         subprocess.run(["git", "-C", repo, "worktree", "add", "-q", "--detach", wt, case["head"]], check=True, capture_output=True)
     try:
-        cmd = ["claude", "-p", PROMPT.format(**case), "--settings", CLAUDE_SETTINGS, "--output-format", "json",
-               "--json-schema", json.dumps(SCHEMA), "--permission-mode", "default", "--allowedTools", *READ_ONLY_TOOLS]
+        prompt, extra = PROMPT.format(**case), []
+        # 親ディレクトリの固有設定を使うネストしたリポは、worktree からその設定が見えないので明示して渡す
+        if case.get("project_settings"):
+            path = os.path.join(PROGRAMMING, case["project_settings"])
+            prompt += PROJECT_SETTINGS_NOTE.format(path=path)
+            extra = ["--add-dir", os.path.dirname(os.path.dirname(path))]
+        cmd = ["claude", "-p", prompt, "--settings", CLAUDE_SETTINGS, "--output-format", "json",
+               "--json-schema", json.dumps(SCHEMA), "--permission-mode", "default", *extra, "--allowedTools", *READ_ONLY_TOOLS]
         t = time.time()
         r = subprocess.run(cmd, cwd=wt, capture_output=True, text=True, timeout=timeout)
         out = json.loads(r.stdout)
@@ -187,6 +195,8 @@ def run(a):
     prev = sorted(glob.glob(os.path.join(DATA, "results", "*.json")))
     json.dump(result, open(path, "w", encoding="utf8"), ensure_ascii=False, indent=1)
     print(json.dumps(summary, ensure_ascii=False))
+    ids = {r["id"] for r in rows}
+    prev = [f for f in prev if {r["id"] for r in json.load(open(f, encoding="utf8"))["cases"]} == ids]
     if prev:
         p = json.load(open(prev[-1], encoding="utf8"))["summary"]
         print(f"前回 {os.path.basename(prev[-1])}: recall {p['recall']} → {summary['recall']} / clean 誤検知 {p['clean_cases_with_false_positive']} → {summary['clean_cases_with_false_positive']}")
@@ -197,7 +207,10 @@ def run(a):
 def fresh(_):
     if not glob.glob(os.path.join(DATA, "cases", "*.json")):
         print("評価ケースなし(採点をスキップ)"); return 0
-    results = sorted(glob.glob(os.path.join(DATA, "results", "*.json")))
+    ids = {json.load(open(p, encoding="utf8")).get("id") or os.path.splitext(os.path.basename(p))[0] for p in glob.glob(os.path.join(DATA, "cases", "*.json"))}
+    # --only で一部だけ回した結果では配信の判断に使わない
+    results = [p for p in sorted(glob.glob(os.path.join(DATA, "results", "*.json")))
+               if {r["id"] for r in json.load(open(p, encoding="utf8"))["cases"]} >= ids]
     rev = plugins_rev()
     if results and json.load(open(results[-1], encoding="utf8"))["plugins_rev"] == rev:
         print(f"最新の採点は今の plugins/ ({rev[:12]}) で実施済み"); return 0
