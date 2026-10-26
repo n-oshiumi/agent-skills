@@ -37,6 +37,17 @@ PROMPT = """このリポジトリの変更 `{base}..{head}` をレビューし�
 CLAUDE_SETTINGS = '{"disableAllHooks":true,"outputStyle":"default"}'
 # 同じリポへの worktree add/remove を並行させると .git のロックで落ちる
 REPO_LOCKS = collections.defaultdict(threading.Lock)
+JUDGE_MODEL = "sonnet"
+JUDGE_SCHEMA = {"type": "object", "properties": {"reason": {"type": "string"}, "same": {"type": "array", "items": {"type": "integer"}}}, "required": ["reason", "same"]}
+JUDGE_PROMPT = """コードレビューの採点をする。ツールは使わず、下の文だけで判定する。
+
+期待するバグ: {bug}
+
+レビュアーの指摘:
+{listing}
+
+reason に、期待するバグの「原因」と「利用者・データに起きる誤動作」を1行ずつ書き、各指摘について両方が一致するかを書く。
+両方が一致する指摘の番号をすべて same に入れる。原因が同じでも誤動作が違う(例: 期待は欠測が残る、指摘は処理が失敗する)なら別の不具合。該当が無ければ空配列。"""
 READ_ONLY_TOOLS = ["Read", "Grep", "Glob", "Skill", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)", "Bash(git blame:*)", "Bash(ls:*)"]
 
 
@@ -88,28 +99,58 @@ def review(case, timeout):
             subprocess.run(["git", "-C", repo, "worktree", "remove", "--force", wt], capture_output=True)
 
 
+def same_path(a, b):
+    a, b = a.lstrip("./"), b.lstrip("./")
+    return a == b or a.endswith("/" + b) or b.endswith("/" + a)
+
+
 def matches(f, exp):
     for loc in exp.get("locations") or [exp]:
-        a, b = f["file"].lstrip("./"), loc["file"].lstrip("./")
         lo, hi = loc["lines"]
-        if (a == b or a.endswith("/" + b) or b.endswith("/" + a)) and lo - LINE_SLACK <= f["line"] <= hi + LINE_SLACK:
+        if same_path(f["file"], loc["file"]) and lo - LINE_SLACK <= f["line"] <= hi + LINE_SLACK:
             return True
     return False
 
 
+def in_expected_file(f, exp):
+    return any(same_path(f["file"], loc["file"]) for loc in exp.get("locations") or [exp])
+
+
+def judge(exp, candidates):
+    listing = "\n".join(f"{i}: [{f['severity']}] {f['file']}:{f['line']} {f['summary']}" for i, f in enumerate(candidates))
+    cmd = ["claude", "-p", JUDGE_PROMPT.format(bug=exp["bug"], listing=listing), "--settings", CLAUDE_SETTINGS,
+           "--output-format", "json", "--json-schema", json.dumps(JUDGE_SCHEMA), "--model", JUDGE_MODEL]
+    out = json.loads(subprocess.run(cmd, cwd=tempfile.gettempdir(), capture_output=True, text=True, timeout=300).stdout)
+    same = [candidates[i] for i in out["structured_output"]["same"] if 0 <= i < len(candidates)]
+    return same, out.get("total_cost_usd") or 0
+
+
+def is_blocking(f, min_sev):
+    return SEV.index(f["severity"]) <= SEV.index(min_sev)
+
+
 def score(case, findings, min_sev):
-    blocking = [f for f in findings if SEV.index(f["severity"]) <= SEV.index(min_sev)]
+    blocking = [f for f in findings if is_blocking(f, min_sev)]
     if case["kind"] == "clean":
         return {"false_positives": len(blocking)}
-    hits = []
-    for exp in case["expected"]:
-        if any(matches(f, exp) for f in blocking):
-            hits.append("hit")
-        elif any(matches(f, exp) for f in findings):
-            hits.append("low-severity")
+    hits, matched, judged, cost = [], [], [], 0
+    for n, exp in enumerate(case["expected"]):
+        located = [f for f in findings if matches(f, exp)]
+        if any(is_blocking(f, min_sev) for f in located):
+            hits.append("hit"); matched += located; continue
+        # 同じバグを呼び出し側など別の行で指摘することがあるので、同じファイルの指摘だけ意味で照合する
+        rest = [f for f in findings if in_expected_file(f, exp) and f not in located]
+        same, c = judge(exp, rest) if rest else ([], 0)
+        cost += c
+        if same:
+            hits.append("hit" if any(is_blocking(f, min_sev) for f in same) else "low-severity"); matched += same
+            judged += [{"expected": n, "file": f["file"], "line": f["line"]} for f in same]
         else:
-            hits.append("miss")
-    return {"expected": hits, "unrelated_blocking": sum(1 for f in blocking if not any(matches(f, e) for e in case["expected"]))}
+            hits.append("low-severity" if located else "miss"); matched += located
+    row = {"expected": hits, "unrelated_blocking": sum(1 for f in blocking if f not in matched), "judge_cost_usd": round(cost, 3)}
+    if judged:
+        row["judged"] = judged
+    return row
 
 
 def run(a):
@@ -137,7 +178,7 @@ def run(a):
         "clean_cases_with_false_positive": sum(1 for r in clean if r["false_positives"]) if clean else None,
         "clean_cases": len(clean),
         "errors": sum(1 for r in rows if "error" in r),
-        "cost_usd": round(sum(r.get("cost_usd") or 0 for r in rows), 2),
+        "cost_usd": round(sum((r.get("cost_usd") or 0) + r.get("judge_cost_usd", 0) for r in rows), 2),
     }
     stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H%M")
     result = {"at": stamp, "label": a.label, "plugins_rev": plugins_rev(), "min_sev": a.min_sev, "summary": summary, "cases": sorted(rows, key=lambda r: r["id"])}
