@@ -27,4 +27,6 @@ plugin 経由の skill は名前空間付き: `/review-workflow:review-checklist
 - 観点の追加: 各リポで `/review-learning` を使うと、共通の観点は `references/*.md` 末尾の「## 候補(レビューで発見)」に `(リポ名 日付)` 付きで溜まる。
 - 棚卸し: 保守者が `/review-checklist-groom`(`maintainer-skills/`、personal skill として symlink)で候補を昇格・統合・削除し、10KB 上限を守る。
 - 配信: `tools/release.sh [patch|minor|major]` が `tools/check.py`(frontmatter・サイズ・version 整合)を通してから version を上げ、commit / tag / push する。利用者は version が上がったときだけ更新を受け取る。
+- 精度の測定: `tools/eval.py run` が過去に見逃したバグ(と問題なしの変更)にレビュアーを当て直し、recall と誤検知を出す。`release.sh` は今の `plugins/` で採点していないと止まる(`SKIP_EVAL=1` で飛ばす)。ケースと結果は非公開リポの中身を含むので、このリポには置かずローカル(`~/programming/my-tools/review-evals/`)に置く。
+- ノイズ率: `review-checklist/scripts/review_log.py` が指摘ごとの処置(直した/却下/意図どおり/放置)をローカル(`~/.claude/review-log.jsonl`)に記録し、`stats --by ref` で観点ごとの採用率を出す。棚卸しで採用率の低い観点を削る。
 - CI: `.github/workflows/check.yml` が push ごとに `tools/check.py` を回す。

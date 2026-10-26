@@ -30,6 +30,9 @@ description: 言語・フレームワーク非依存のコードレビューチ�
 5. 指摘には根拠を `ファイル:行` で示す。
 6. チェックリストとは別に、同じ差分へセキュリティレビューを必ず1パス当てる(Claude Code: `/security-review`、Codex: 認証・認可 / 入力検証・インジェクション / 秘密・PII の露出 / 追加した依存 を別パスで読む)。
    指摘は同じ P0〜P3 で付け、報告に「セキュリティ: P0/P1 n 件 / 該当なし」を1行入れる。docs のみの差分は対象外。
+7. 指摘を受けて処置を決めた側(自己レビューなら自分、Codex・人の指摘なら実装側)が、1件ごとに処置を記録する。ノイズ率(観点ごとの採用率)の元データになる:
+   `python3 <この skill のディレクトリ>/scripts/review_log.py add --source self|codex|security|human --sev P? --ref <観点。例 common.md#入力と境界 / security-review / none> --outcome fixed|rejected|intentional|ignored`
+   rejected = 指摘が誤り、intentional = 仕様どおり、ignored = 正しいが直さない。
 
 ## 項目の書き方(この skill に追記するときのルール)
 

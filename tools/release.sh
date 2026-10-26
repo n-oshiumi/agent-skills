@@ -6,6 +6,7 @@ cd "$(dirname "$0")/.."
 kind=${1:-patch}; dry=${2:-}
 [ -z "$(git status --porcelain)" ] || { echo "作業ツリーに未コミットの変更があります。先にコミットしてください。"; git status --short; exit 1; }
 python3 tools/check.py
+[ "${SKIP_EVAL:-}" = 1 ] || python3 tools/eval.py fresh || exit 1
 cur=$(python3 -c 'import json;print(json.load(open("plugins/review-workflow/.claude-plugin/plugin.json"))["version"])')
 IFS=. read -r a b c <<<"$cur"
 case $kind in patch) c=$((c+1));; minor) b=$((b+1)); c=0;; major) a=$((a+1)); b=0; c=0;; *) echo "usage: release.sh [patch|minor|major]"; exit 1;; esac
