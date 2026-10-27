@@ -37,6 +37,25 @@ for ref in sorted(glob.glob(os.path.join(ROOT, "plugins", "*", "skills", "*", "r
     if size > LIMIT:
         errors.append(f"{rel}: {size} B > {LIMIT} B(統合・削除して 10KB 以内にする)")
 
+# 同期のキーが重複すると sync.mjs が片方の行を見失う。版と変更履歴のずれは配信後に各リポで気付けない。
+for tpl in sorted(glob.glob(os.path.join(ROOT, "plugins", "*", "skills", "*", "template.md"))):
+    rel = os.path.relpath(tpl, ROOT)
+    text = open(tpl, encoding="utf8").read()
+    ids = re.findall(r"^\| `([\w.-]+)` \|", text, re.M)
+    dup = sorted({i for i in ids if ids.count(i) > 1})
+    if dup:
+        errors.append(f"{rel}: ID が重複 {', '.join(dup)}")
+    if any(i.startswith("local.") for i in ids):
+        errors.append(f"{rel}: local. の ID はテンプレに置かない(昇格時に付け直す)")
+    m = re.search(r"template-version:\s*(\d+)", text)
+    changes = os.path.join(os.path.dirname(tpl), "CHANGES.md")
+    if not m:
+        errors.append(f"{rel}: template-version が無い")
+    elif not os.path.exists(changes) or not re.search(rf"^- v{m.group(1)}\b", open(changes, encoding="utf8").read(), re.M):
+        errors.append(f"{rel}: CHANGES.md に v{m.group(1)} の記載が無い")
+    else:
+        info.append(f"{rel}: v{m.group(1)}, {len(ids)} 行")
+
 for plugin in sorted(glob.glob(os.path.join(ROOT, "plugins", "*", ".claude-plugin", "plugin.json"))):
     p = json.load(open(plugin)); name = p["name"]
     mk = json.load(open(os.path.join(ROOT, ".claude-plugin", "marketplace.json")))

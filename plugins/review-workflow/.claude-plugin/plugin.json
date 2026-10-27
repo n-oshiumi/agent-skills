@@ -1,6 +1,6 @@
 {
   "name": "review-workflow",
-  "description": "言語・FW 非依存のコードレビューチェックリスト(review-checklist)、レビュー駆動実装ワークフロー(review-driven-implement)、PRD・設計 Spec の 4 レンズ並列レビュー(spec-design-multireview + spec-design-reviewer agent)",
+  "description": "言語・FW 非依存のコードレビューチェックリスト(review-checklist)、レビュー駆動実装ワークフロー(review-driven-implement)、PRD・設計 Spec の 4 レンズ並列レビュー(spec-design-multireview + spec-design-reviewer agent)、攻撃の種類ごとの対策状況の表と版の同期(threat-coverage)",
   "version": "1.6.1",
   "author": {
     "name": "Naoki Oshiumi"
