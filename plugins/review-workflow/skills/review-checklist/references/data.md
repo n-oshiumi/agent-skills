@@ -57,3 +57,4 @@
 ## 候補(レビューで発見)
 - [P1] DB のバックアップを削除後も残す設定は、消去の約束(完全消去の時期)と同じ差分で整合させる(clinic-dashboard 2026-10-25)
 - [P1] 生 SQL の別名・識別子に MySQL 8 の予約語(`groups`・`rank`・`window` 等)を使わない(5.7・MariaDB では通り 8.0.2 以降で構文エラー)。版上げ・載せ替えの前に grep で洗い、一覧系の生 SQL にも実 DB のテストを置く(fukuro-automations 2026-10-26)
+- [P1] DB 関数の RAISE でサーバログへ記録を出すなら、サーバが自動で付ける行まで見る。PostgreSQL では LOG に `STATEMENT`(呼び出し SQL)が付き、WARNING でもネスト呼び出しの `CONTEXT` に呼び出し SQL が載る。ログに載りうる引数は形式で絞り、目印文字列でサーバログ全体を確かめる(clinic-dashboard 2026-10-27)
