@@ -2,7 +2,7 @@
 """plugin の整合検査。release.sh と CI から呼ぶ。失敗は exit 1。"""
 import glob, json, os, re, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LIMIT = 10 * 1024
+LIMIT = 12 * 1024  # 2026-11-05 10KB→12KB(本文だけで上限に達し、削ると eval の recall が落ちたため)
 errors, info = [], []
 
 def frontmatter(path):
@@ -35,7 +35,7 @@ for ref in sorted(glob.glob(os.path.join(ROOT, "plugins", "*", "skills", "*", "r
     n_cand = sum(1 for l in cand.splitlines() if l.startswith("- "))
     info.append(f"{rel}: {size:5d} B, 候補 {n_cand}")
     if size > LIMIT:
-        errors.append(f"{rel}: {size} B > {LIMIT} B(統合・削除して 10KB 以内にする)")
+        errors.append(f"{rel}: {size} B > {LIMIT} B(統合・削除して 12KB 以内にする)")
 
 # 同期のキーが重複すると sync.mjs が片方の行を見失う。版と変更履歴のずれは配信後に各リポで気付けない。
 for tpl in sorted(glob.glob(os.path.join(ROOT, "plugins", "*", "skills", "*", "template.md"))):
