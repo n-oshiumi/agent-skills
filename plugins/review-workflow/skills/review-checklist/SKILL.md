@@ -1,6 +1,6 @@
 ---
 name: review-checklist
-description: 言語・フレームワーク非依存のコードレビューチェックリスト(全リポ共通の正本)。実装の自己レビュー、Codex クロスレビュー、PR レビュー、「レビューして」と頼まれたときの「何を見るか」の基準として使い、セキュリティレビューも必ず併せて行う。/review-driven-implement の Phase 3(自己レビュー)と Phase 5(Codex)から参照される。変更差分のレイヤー(backend / frontend / infra / data)に応じて references/ の該当ファイルだけを読む。プロジェクト固有の不変条件・FW 固有の落とし穴は各リポのチェックリストが持ち、本 skill には書かない。
+description: 言語・フレームワーク非依存のコードレビューチェックリスト(全リポ共通の正本)。実装の自己レビュー、Codex クロスレビュー、PR レビュー、「レビューして」と頼まれたときの「何を見るか」の基準として使い、セキュリティレビューも必ず併せて行う。/review-driven-implement の Phase 3(Codex)と Phase 4(自己レビュー)から参照される。変更差分のレイヤー(backend / frontend / infra / data)に応じて references/ の該当ファイルだけを読む。プロジェクト固有の不変条件・FW 固有の落とし穴は各リポのチェックリストが持ち、本 skill には書かない。
 ---
 
 # review-checklist — 共通コードレビュー基準
