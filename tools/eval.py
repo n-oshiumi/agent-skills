@@ -32,7 +32,7 @@ SCHEMA = {
 PROMPT = """このリポジトリの変更 `{base}..{head}` をレビューして。
 変更の意図: {intent}
 
-いつもどおりの手順で見る(review-checklist skill とセキュリティレビュー)。コードは編集しない。
+いつもどおりの手順で見る(review-workflow:review-checklist skill とセキュリティレビュー)。コードは編集しない。
 差分に起因する指摘だけを返す。file はリポジトリ直下からの相対パス、line は {head} 時点の行番号。"""
 PROJECT_SETTINGS_NOTE = """
 このリポジトリのプロジェクト固有設定(固有チェックリストの場所を含む)は {path} にある。リポ固有チェックリストはここから辿って読む。"""
@@ -40,6 +40,12 @@ CLAUDE_SETTINGS = '{"disableAllHooks":true,"outputStyle":"default"}'
 # 同じリポへの worktree add/remove を並行させると .git のロックで落ちる
 REPO_LOCKS = collections.defaultdict(threading.Lock)
 JUDGE_MODEL = "sonnet"
+# 採点の条件は実行環境から決めない。effort は settings の modelSettings で変わり、
+# ~/.claude/skills の review-checklist は main の作業ツリー(未コミット込み)を指すので、
+# どちらも ROOT の版と結果に記録した値に固定する
+REVIEW_MODEL = "opus"
+REVIEW_EFFORT = "high"
+USER_RULES = os.path.expanduser("~/.claude/CLAUDE.md")
 JUDGE_SCHEMA = {"type": "object", "properties": {"reason": {"type": "string"}, "same": {"type": "array", "items": {"type": "integer"}}}, "required": ["reason", "same"]}
 JUDGE_PROMPT = """コードレビューの採点をする。ツールは使わず、下の文だけで判定する。
 
@@ -95,7 +101,7 @@ def review(case, timeout):
             prompt += PROJECT_SETTINGS_NOTE.format(path=path)
             extra = ["--add-dir", os.path.dirname(os.path.dirname(path))]
         cmd = ["claude", "-p", prompt, "--settings", CLAUDE_SETTINGS, "--output-format", "json",
-               "--json-schema", json.dumps(SCHEMA), "--permission-mode", "default", *extra, "--allowedTools", *READ_ONLY_TOOLS]
+               "--json-schema", json.dumps(SCHEMA), "--permission-mode", "default", *review_env_args(), *extra, "--allowedTools", *READ_ONLY_TOOLS]
         t = time.time()
         r = subprocess.run(cmd, cwd=wt, capture_output=True, text=True, timeout=timeout)
         out = json.loads(r.stdout)
@@ -105,6 +111,19 @@ def review(case, timeout):
     finally:
         with REPO_LOCKS[repo]:
             subprocess.run(["git", "-C", repo, "worktree", "remove", "--force", wt], capture_output=True)
+
+
+def review_env_args():
+    # user の設定源を外すと ~/.claude/skills と user の CLAUDE.md も読まれなくなるので、規約だけ明示して足す
+    args = ["--model", REVIEW_MODEL, "--effort", REVIEW_EFFORT, "--setting-sources", "project,local",
+            "--plugin-dir", os.path.join(ROOT, "plugins", "review-workflow")]
+    if os.path.exists(USER_RULES):
+        args += ["--append-system-prompt-file", USER_RULES]
+    return args
+
+
+def same_conditions(result):
+    return result.get("review_model") == REVIEW_MODEL and result.get("review_effort") == REVIEW_EFFORT
 
 
 def same_path(a, b):
@@ -189,7 +208,7 @@ def run(a):
         "cost_usd": round(sum((r.get("cost_usd") or 0) + r.get("judge_cost_usd", 0) for r in rows), 2),
     }
     stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H%M")
-    result = {"at": stamp, "label": a.label, "plugins_rev": plugins_rev(), "min_sev": a.min_sev, "summary": summary, "cases": sorted(rows, key=lambda r: r["id"])}
+    result = {"at": stamp, "label": a.label, "plugins_rev": plugins_rev(), "review_model": REVIEW_MODEL, "review_effort": REVIEW_EFFORT, "min_sev": a.min_sev, "summary": summary, "cases": sorted(rows, key=lambda r: r["id"])}
     os.makedirs(os.path.join(DATA, "results"), exist_ok=True)
     path = os.path.join(DATA, "results", f"{stamp}.json")
     prev = sorted(glob.glob(os.path.join(DATA, "results", "*.json")))
@@ -197,6 +216,9 @@ def run(a):
     print(json.dumps(summary, ensure_ascii=False))
     ids = {r["id"] for r in rows}
     prev = [f for f in prev if {r["id"] for r in json.load(open(f, encoding="utf8"))["cases"]} == ids]
+    if prev and not same_conditions(json.load(open(prev[-1], encoding="utf8"))):
+        print(f"前回 {os.path.basename(prev[-1])} は採点条件(モデル・effort・skill の読み込み)が違うので比べない")
+        prev = []
     if prev:
         p = json.load(open(prev[-1], encoding="utf8"))["summary"]
         print(f"前回 {os.path.basename(prev[-1])}: recall {p['recall']} → {summary['recall']} / clean 誤検知 {p['clean_cases_with_false_positive']} → {summary['clean_cases_with_false_positive']}")
@@ -212,7 +234,8 @@ def fresh(_):
     results = [p for p in sorted(glob.glob(os.path.join(DATA, "results", "*.json")))
                if {r["id"] for r in json.load(open(p, encoding="utf8"))["cases"]} >= ids]
     rev = plugins_rev()
-    if results and json.load(open(results[-1], encoding="utf8"))["plugins_rev"] == rev:
+    last = json.load(open(results[-1], encoding="utf8")) if results else {}
+    if last.get("plugins_rev") == rev and same_conditions(last):
         print(f"最新の採点は今の plugins/ ({rev[:12]}) で実施済み"); return 0
     print(f"今の plugins/ ({rev[:12]}) で採点していない。`tools/eval.py run` を回して結果を確かめてから配信する(飛ばすなら SKIP_EVAL=1)")
     return 1
