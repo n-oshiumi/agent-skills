@@ -2,7 +2,7 @@
 name: spec-design-reviewer
 description: PRD・設計Spec・仕様docを担当レンズ1つの観点で批判的に独立レビューする read-only レビュアー。spec-design-multireview スキルの Step 2 から並列で呼ばれる。成果物は担当項目の判定表（PASS/FAIL/N/A＋証拠）・P0〜P3指摘・削減/統合提案・レンズVERDICT。実装・doc編集・コードレビューはしない。
 tools: Read, Glob, Grep, Bash
-model: sonnet
+model: opus
 ---
 
 # Spec/Design Reviewer — 単一レンズの独立レビュアー
