@@ -4,8 +4,9 @@
 ケースと結果は非公開リポの中身を含むので、このリポ(公開)には置かない。既定の置き場は ~/programming/my-tools/review-evals/。
 
 usage:
-  tools/eval.py run [--cases DIR] [--only ID ...] [--jobs N] [--min-sev P1] [--label TEXT]
+  tools/eval.py run [--cases DIR] [--only ID ...] [--split dev|holdout|all] [--jobs N] [--min-sev P1] [--label TEXT]
   tools/eval.py fresh   # 最新の結果が今の plugins/ で採点されたものか(release.sh から呼ぶ)
+  tools/eval.py spread  # 同じ plugins/ と採点条件で複数回回した結果の recall・誤検知の幅(揺れ)
 """
 import argparse, collections, hashlib, concurrent.futures as cf, datetime, glob, json, os, subprocess, sys, tempfile, threading, time
 
@@ -13,6 +14,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.expanduser(os.environ.get("REVIEW_EVALS_DIR", "~/programming/my-tools/review-evals"))
 PROGRAMMING = os.path.expanduser("~/programming")
 SEV = ["P0", "P1", "P2", "P3"]
+# holdout はチェックリストの修正に使わないケース。dev の見逃しに合わせた修正が、他のケースにも効くか(壊さないか)を見る
+SPLITS = ["dev", "holdout"]
 LINE_SLACK = 10
 SCHEMA = {
     "type": "object",
@@ -68,7 +71,7 @@ def plugins_rev():
     return h.hexdigest()
 
 
-def load_cases(d, only):
+def load_cases(d, only, split="all"):
     cases = []
     for p in sorted(glob.glob(os.path.join(d, "*.json"))):
         c = json.load(open(p, encoding="utf8"))
@@ -80,6 +83,10 @@ def load_cases(d, only):
             missing.append("expected")
         if missing:
             sys.exit(f"{p}: {', '.join(missing)} が無い")
+        if c.get("split") not in SPLITS:
+            sys.exit(f"{p}: split は {' / '.join(SPLITS)} のどちらか")
+        if split != "all" and c["split"] != split:
+            continue
         cases.append(c)
     return cases
 
@@ -191,22 +198,17 @@ def run(a):
             c = futs[fut]
             try:
                 findings, sec, cost = fut.result()
-                rows.append({"id": c["id"], "kind": c["kind"], "seconds": sec, "cost_usd": cost, **score(c, findings, a.min_sev), "findings": findings})
+                rows.append({"id": c["id"], "kind": c["kind"], "split": c["split"], "seconds": sec, "cost_usd": cost, **score(c, findings, a.min_sev), "findings": findings})
             except Exception as e:
-                rows.append({"id": c["id"], "kind": c["kind"], "error": str(e)[:500]})
-            print(f"  {c['id']}: {json.dumps({k: v for k, v in rows[-1].items() if k not in ('findings', 'id')}, ensure_ascii=False)}", flush=True)
+                rows.append({"id": c["id"], "kind": c["kind"], "split": c["split"], "error": str(e)[:500]})
+            # holdout の当否を1件ずつ見ると、それに合わせてチェックリストを直したくなるので集計だけ出す
+            shown = {k: v for k, v in rows[-1].items() if k not in ("findings", "id")} if c["split"] == "dev" else {"split": "holdout", "error": rows[-1].get("error")}
+            print(f"  {c['id']}: {json.dumps(shown, ensure_ascii=False)}", flush=True)
 
-    bug = [r for r in rows if r["kind"] == "bug" and "error" not in r]
-    clean = [r for r in rows if r["kind"] == "clean" and "error" not in r]
-    exp = [h for r in bug for h in r["expected"]]
-    summary = {
-        "recall": round(exp.count("hit") / len(exp), 3) if exp else None,
-        "found_but_low_severity": exp.count("low-severity"),
-        "clean_cases_with_false_positive": sum(1 for r in clean if r["false_positives"]) if clean else None,
-        "clean_cases": len(clean),
-        "errors": sum(1 for r in rows if "error" in r),
-        "cost_usd": round(sum((r.get("cost_usd") or 0) + r.get("judge_cost_usd", 0) for r in rows), 2),
-    }
+    summary = {**summarize(rows),
+               "errors": sum(1 for r in rows if "error" in r),
+               "cost_usd": round(sum((r.get("cost_usd") or 0) + r.get("judge_cost_usd", 0) for r in rows), 2),
+               "by_split": {s: summarize([r for r in rows if r["split"] == s]) for s in SPLITS if any(r["split"] == s for r in rows)}}
     stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H%M")
     result = {"at": stamp, "label": a.label, "plugins_rev": plugins_rev(), "review_model": REVIEW_MODEL, "review_effort": REVIEW_EFFORT, "min_sev": a.min_sev, "summary": summary, "cases": sorted(rows, key=lambda r: r["id"])}
     os.makedirs(os.path.join(DATA, "results"), exist_ok=True)
@@ -222,8 +224,50 @@ def run(a):
     if prev:
         p = json.load(open(prev[-1], encoding="utf8"))["summary"]
         print(f"前回 {os.path.basename(prev[-1])}: recall {p['recall']} → {summary['recall']} / clean 誤検知 {p['clean_cases_with_false_positive']} → {summary['clean_cases_with_false_positive']}")
+        for s, cur in summary["by_split"].items():
+            old = p.get("by_split", {}).get(s)
+            if old:
+                print(f"  {s}: recall {old['recall']} → {cur['recall']} / clean 誤検知 {old['clean_cases_with_false_positive']} → {cur['clean_cases_with_false_positive']}")
     print(f"保存: {path}")
     return 1 if summary["errors"] else 0
+
+
+def summarize(rows):
+    bug = [r for r in rows if r["kind"] == "bug" and "error" not in r]
+    clean = [r for r in rows if r["kind"] == "clean" and "error" not in r]
+    exp = [h for r in bug for h in r["expected"]]
+    return {
+        "recall": round(exp.count("hit") / len(exp), 3) if exp else None,
+        "found_but_low_severity": exp.count("low-severity"),
+        "clean_cases_with_false_positive": sum(1 for r in clean if r["false_positives"]) if clean else None,
+        "clean_cases": len(clean),
+    }
+
+
+def spread(_):
+    groups = collections.defaultdict(list)
+    for p in sorted(glob.glob(os.path.join(DATA, "results", "*.json"))):
+        r = json.load(open(p, encoding="utf8"))
+        if r["summary"].get("errors"):
+            continue
+        key = (r.get("plugins_rev"), r.get("review_model"), r.get("review_effort"), r.get("min_sev"), tuple(sorted((c["id"], c.get("split")) for c in r["cases"])))
+        groups[key].append(r)
+    found = False
+    for (rev, model, effort, _, ids), rs in groups.items():
+        if len(rs) < 2:
+            continue
+        found = True
+        print(f"{rev[:12]} {model}/{effort} ケース{len(ids)}件 × {len(rs)}回 ({', '.join(r['at'] for r in rs)})")
+        for name, pick in [("全体", lambda r: r["summary"])] + [(s, lambda r, s=s: r["summary"].get("by_split", {}).get(s)) for s in SPLITS]:
+            vals = [pick(r) for r in rs]
+            if any(v is None for v in vals):
+                continue
+            rec = [v["recall"] for v in vals if v["recall"] is not None]
+            fp = [v["clean_cases_with_false_positive"] for v in vals if v["clean_cases_with_false_positive"] is not None]
+            print(f"  {name}: recall {min(rec)}〜{max(rec)} / clean 誤検知 {min(fp)}〜{max(fp)}" if rec and fp else f"  {name}: 集計なし")
+    if not found:
+        print("同じ plugins/ と採点条件で2回以上回した結果が無い")
+    return 0
 
 
 def fresh(_):
@@ -247,12 +291,14 @@ def main():
     r = sub.add_parser("run")
     r.add_argument("--cases", default=os.path.join(DATA, "cases"))
     r.add_argument("--only", nargs="*")
+    r.add_argument("--split", default="all", choices=SPLITS + ["all"])
     r.add_argument("--jobs", type=int, default=3)
     r.add_argument("--min-sev", default="P1", choices=SEV)
     r.add_argument("--timeout", type=int, default=1800)
     r.add_argument("--label", default="")
     r.set_defaults(fn=run)
     sub.add_parser("fresh").set_defaults(fn=fresh)
+    sub.add_parser("spread").set_defaults(fn=spread)
     a = ap.parse_args()
     sys.exit(a.fn(a))
 

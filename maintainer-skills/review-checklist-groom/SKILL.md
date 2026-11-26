@@ -11,7 +11,7 @@ argument-hint: '[--dry-run]'
 ## 手順
 
 1. `python3 ~/programming/agent-skills/tools/check.py` で現状(各ファイルのサイズ・候補数)を出す。
-2. 精度を見る: `python3 ~/.claude/skills/review-checklist/scripts/review_log.py stats --by ref --since <前回の棚卸し日>` で観点ごとの採用率を出し、印の付いた観点(5件以上で採用率30%未満)は削除・降格・書き直しの候補にする。評価ケースがあれば `python3 ~/programming/agent-skills/tools/eval.py run` を回し、recall と clean 誤検知を前回と比べる(変更後に下がったら戻す)。
+2. 精度を見る: `python3 ~/.claude/skills/review-checklist/scripts/review_log.py stats --by ref --since <前回の棚卸し日>` で観点ごとの採用率を出し、印の付いた観点(5件以上で採用率30%未満)は削除・降格・書き直しの候補にする。評価ケースがあれば `python3 ~/programming/agent-skills/tools/eval.py run` を回し、recall と clean 誤検知を前回と比べる(変更後に下がったら戻す)。見逃しを読んで直すのは `dev` のケースだけで、`holdout` は集計値だけ見る(dev が上がって holdout が下がったら、dev に合わせすぎた修正として戻す)。前回との差が `tools/eval.py spread` の揺れの幅に収まるなら、上がった・下がったと判断しない。
 3. 各 references の `## 候補(レビューで発見)` を全部読み、候補 1 件ごとに次のどれかに倒す:
    - **昇格**: 末尾の `(リポ名 日付)` が 2 リポ以上、または P0/P1 で汎用性が明らか → 本文の該当節へ移す(既存項目と重なるなら既存項目を書き換えて統合。1 行・言語非依存・失敗シナリオが分かる文に整える)。
    - **機械化**: テスト・lint・hook で機械的に落とせる観点 → 削除し、報告に「機械化候補」として残す(実装は各リポで)。
