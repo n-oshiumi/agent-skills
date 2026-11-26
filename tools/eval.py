@@ -4,9 +4,10 @@
 ケースと結果は非公開リポの中身を含むので、このリポ(公開)には置かない。既定の置き場は ~/programming/my-tools/review-evals/。
 
 usage:
-  tools/eval.py run [--cases DIR] [--only ID ...] [--split dev|holdout|all] [--jobs N] [--min-sev P1] [--label TEXT]
+  tools/eval.py run [--reviewer claude|codex] [--cases DIR] [--only ID ...] [--split dev|holdout|all] [--jobs N] [--min-sev P1] [--label TEXT]
   tools/eval.py fresh   # 最新の結果が今の plugins/ で採点されたものか(release.sh から呼ぶ)
   tools/eval.py spread  # 同じ plugins/ と採点条件で複数回回した結果の recall・誤検知の幅(揺れ)
+  tools/eval.py compare # 最新の codex の結果を同じ版の claude の結果に足したとき(実運用の Claude + Codex)に recall・誤検知がどう変わるか
 """
 import argparse, collections, hashlib, concurrent.futures as cf, datetime, glob, json, os, subprocess, sys, tempfile, threading, time
 
@@ -48,6 +49,12 @@ JUDGE_MODEL = "sonnet"
 # どちらも ROOT の版と結果に記録した値に固定する
 REVIEW_MODEL = "opus"
 REVIEW_EFFORT = "high"
+# 実運用の ~/.codex/config.toml と同じ値。~/.codex/skills の review-checklist は main の作業ツリーを指すので、ROOT の版を明示して読ませる
+CODEX_MODEL = "gpt-6.1-sol"
+CODEX_EFFORT = "high"
+CODEX_SKILL_NOTE = """
+レビューの基準は {path}(review-checklist skill の正本)。SKILL.md の手順に従い、そこから references を辿って読む。~/.codex/skills の review-checklist は使わない。"""
+CONDITIONS = {"claude": (REVIEW_MODEL, REVIEW_EFFORT), "codex": (CODEX_MODEL, CODEX_EFFORT)}
 USER_RULES = os.path.expanduser("~/.claude/CLAUDE.md")
 JUDGE_SCHEMA = {"type": "object", "properties": {"reason": {"type": "string"}, "same": {"type": "array", "items": {"type": "integer"}}}, "required": ["reason", "same"]}
 JUDGE_PROMPT = """コードレビューの採点をする。ツールは使わず、下の文だけで判定する。
@@ -91,7 +98,17 @@ def load_cases(d, only, split="all"):
     return cases
 
 
-def review(case, timeout):
+def strict(schema):
+    # codex の --output-schema は全プロパティ required・additionalProperties false しか受け付けない
+    if schema.get("type") == "object":
+        props = {k: strict(v) for k, v in schema["properties"].items()}
+        return {**schema, "properties": props, "required": list(props), "additionalProperties": False}
+    if schema.get("type") == "array":
+        return {**schema, "items": strict(schema["items"])}
+    return schema
+
+
+def review(case, timeout, reviewer="claude"):
     repo = os.path.join(PROGRAMMING, case["repo"])
     with REPO_LOCKS[repo]:
         if subprocess.run(["git", "-C", repo, "cat-file", "-e", case["head"] + "^{commit}"], capture_output=True).returncode:
@@ -107,6 +124,8 @@ def review(case, timeout):
             path = os.path.join(PROGRAMMING, case["project_settings"])
             prompt += PROJECT_SETTINGS_NOTE.format(path=path)
             extra = ["--add-dir", os.path.dirname(os.path.dirname(path))]
+        if reviewer == "codex":
+            return review_codex(wt, prompt, timeout)
         cmd = ["claude", "-p", prompt, "--settings", CLAUDE_SETTINGS, "--output-format", "json",
                "--json-schema", json.dumps(SCHEMA), "--permission-mode", "default", *review_env_args(), *extra, "--allowedTools", *READ_ONLY_TOOLS]
         t = time.time()
@@ -120,6 +139,22 @@ def review(case, timeout):
             subprocess.run(["git", "-C", repo, "worktree", "remove", "--force", wt], capture_output=True)
 
 
+def review_codex(wt, prompt, timeout):
+    prompt = prompt.replace("review-workflow:review-checklist skill", "review-checklist skill") + CODEX_SKILL_NOTE.format(
+        path=os.path.join(ROOT, "plugins", "review-workflow", "skills", "review-checklist", "SKILL.md"))
+    with tempfile.TemporaryDirectory(prefix="review-eval-codex-") as tmp:
+        schema, out = os.path.join(tmp, "schema.json"), os.path.join(tmp, "out.json")
+        json.dump(strict(SCHEMA), open(schema, "w", encoding="utf8"))
+        cmd = ["codex", "exec", "-C", wt, "-s", "read-only", "-m", CODEX_MODEL, "-c", f"model_reasoning_effort={CODEX_EFFORT}",
+               "--output-schema", schema, "-o", out, prompt]
+        t = time.time()
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+        # 終了コードが 0 でも最終メッセージが書かれないことがあるので、出力ファイルの中身で決める
+        if not os.path.exists(out) or not open(out, encoding="utf8").read().strip():
+            raise RuntimeError(f"codex error (exit {r.returncode}): {r.stderr[-300:]}")
+        return json.load(open(out, encoding="utf8"))["findings"], round(time.time() - t), None
+
+
 def review_env_args():
     # user の設定源を外すと ~/.claude/skills と user の CLAUDE.md も読まれなくなるので、規約だけ明示して足す
     args = ["--model", REVIEW_MODEL, "--effort", REVIEW_EFFORT, "--setting-sources", "project,local",
@@ -129,8 +164,13 @@ def review_env_args():
     return args
 
 
-def same_conditions(result):
-    return result.get("review_model") == REVIEW_MODEL and result.get("review_effort") == REVIEW_EFFORT
+def reviewer_of(result):
+    # reviewer を記録する前の結果はすべて claude
+    return result.get("reviewer", "claude")
+
+
+def same_conditions(result, reviewer="claude"):
+    return reviewer_of(result) == reviewer and (result.get("review_model"), result.get("review_effort")) == CONDITIONS[reviewer]
 
 
 def same_path(a, b):
@@ -193,7 +233,7 @@ def run(a):
         sys.exit(f"ケースが無い: {a.cases}/*.json")
     rows = []
     with cf.ThreadPoolExecutor(a.jobs) as ex:
-        futs = {ex.submit(review, c, a.timeout): c for c in cases}
+        futs = {ex.submit(review, c, a.timeout, a.reviewer): c for c in cases}
         for fut in cf.as_completed(futs):
             c = futs[fut]
             try:
@@ -210,15 +250,17 @@ def run(a):
                "cost_usd": round(sum((r.get("cost_usd") or 0) + r.get("judge_cost_usd", 0) for r in rows), 2),
                "by_split": {s: summarize([r for r in rows if r["split"] == s]) for s in SPLITS if any(r["split"] == s for r in rows)}}
     stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H%M")
-    result = {"at": stamp, "label": a.label, "plugins_rev": plugins_rev(), "review_model": REVIEW_MODEL, "review_effort": REVIEW_EFFORT, "min_sev": a.min_sev, "summary": summary, "cases": sorted(rows, key=lambda r: r["id"])}
+    model, effort = CONDITIONS[a.reviewer]
+    result = {"at": stamp, "label": a.label, "reviewer": a.reviewer, "plugins_rev": plugins_rev(), "review_model": model, "review_effort": effort, "min_sev": a.min_sev, "summary": summary, "cases": sorted(rows, key=lambda r: r["id"])}
     os.makedirs(os.path.join(DATA, "results"), exist_ok=True)
     path = os.path.join(DATA, "results", f"{stamp}.json")
     prev = sorted(glob.glob(os.path.join(DATA, "results", "*.json")))
     json.dump(result, open(path, "w", encoding="utf8"), ensure_ascii=False, indent=1)
     print(json.dumps(summary, ensure_ascii=False))
     ids = {r["id"] for r in rows}
-    prev = [f for f in prev if {r["id"] for r in json.load(open(f, encoding="utf8"))["cases"]} == ids]
-    if prev and not same_conditions(json.load(open(prev[-1], encoding="utf8"))):
+    prev = [f for f in prev if {r["id"] for r in json.load(open(f, encoding="utf8"))["cases"]} == ids
+            and reviewer_of(json.load(open(f, encoding="utf8"))) == a.reviewer]
+    if prev and not same_conditions(json.load(open(prev[-1], encoding="utf8")), a.reviewer):
         print(f"前回 {os.path.basename(prev[-1])} は採点条件(モデル・effort・skill の読み込み)が違うので比べない")
         prev = []
     if prev:
@@ -250,14 +292,14 @@ def spread(_):
         r = json.load(open(p, encoding="utf8"))
         if r["summary"].get("errors"):
             continue
-        key = (r.get("plugins_rev"), r.get("review_model"), r.get("review_effort"), r.get("min_sev"), tuple(sorted((c["id"], c.get("split")) for c in r["cases"])))
+        key = (r.get("plugins_rev"), reviewer_of(r), r.get("review_model"), r.get("review_effort"), r.get("min_sev"), tuple(sorted((c["id"], c.get("split")) for c in r["cases"])))
         groups[key].append(r)
     found = False
-    for (rev, model, effort, _, ids), rs in groups.items():
+    for (rev, reviewer, model, effort, _, ids), rs in groups.items():
         if len(rs) < 2:
             continue
         found = True
-        print(f"{rev[:12]} {model}/{effort} ケース{len(ids)}件 × {len(rs)}回 ({', '.join(r['at'] for r in rs)})")
+        print(f"{rev[:12]} {reviewer} {model}/{effort} ケース{len(ids)}件 × {len(rs)}回 ({', '.join(r['at'] for r in rs)})")
         for name, pick in [("全体", lambda r: r["summary"])] + [(s, lambda r, s=s: r["summary"].get("by_split", {}).get(s)) for s in SPLITS]:
             vals = [pick(r) for r in rs]
             if any(v is None for v in vals):
@@ -270,16 +312,65 @@ def spread(_):
     return 0
 
 
+def load_results():
+    return [json.load(open(p, encoding="utf8")) for p in sorted(glob.glob(os.path.join(DATA, "results", "*.json")))]
+
+
+def union(a, b):
+    # 実運用では Codex の指摘を受けてから自己レビューするので、どちらかが当てれば当たり、どちらかが誤検知すれば誤検知
+    rows = []
+    for x in a["cases"]:
+        y = {r["id"]: r for r in b["cases"]}[x["id"]]
+        row = {"id": x["id"], "kind": x["kind"], "split": x.get("split")}
+        if x["kind"] == "bug":
+            order = ["hit", "low-severity", "miss"]
+            row["expected"] = [min(h1, h2, key=order.index) for h1, h2 in zip(x["expected"], y["expected"])]
+        else:
+            row["false_positives"] = x["false_positives"] + y["false_positives"]
+        rows.append(row)
+    return rows
+
+
+def compare(_):
+    results = [r for r in load_results() if not r["summary"].get("errors")]
+    codex = [r for r in results if same_conditions(r, "codex")]
+    if not codex:
+        sys.exit("codex の結果が無い。`tools/eval.py run --reviewer codex` を先に回す")
+    def peers(cx):
+        ids = {c["id"] for c in cx["cases"]}
+        return [r for r in results if same_conditions(r, "claude") and r["plugins_rev"] == cx["plugins_rev"] and {c["id"] for c in r["cases"]} == ids]
+    # --only の試し打ちが最新でも比べられるよう、同じ版・同じケースの claude の結果がある最新の codex を使う
+    pairs = [(cx, peers(cx)) for cx in codex if peers(cx)]
+    if not pairs:
+        sys.exit("同じ版・同じケースで claude と codex の両方を採点した結果が無い")
+    cx, claude = pairs[-1]
+    ids = {c["id"] for c in cx["cases"]}
+    def line(name, s):
+        return f"{name}: recall {s['recall']} / clean 誤検知 {s['clean_cases_with_false_positive']}/{s['clean_cases']}"
+    print(f"codex {cx['at']} と claude {len(claude)}回 ({', '.join(r['at'] for r in claude)})、ケース{len(ids)}件")
+    print("  " + line("codex 単独", summarize(cx["cases"])))
+    for cl in claude:
+        both = union(cl, cx)
+        only = [r["id"] for r, c in zip(both, cl["cases"]) if r["kind"] == "bug" and r["expected"].count("hit") > c["expected"].count("hit")]
+        dev_only = [i for i in only if {c["id"]: c for c in cx["cases"]}[i].get("split") == "dev"]
+        print(f"  {cl['at']}  {line('claude 単独', summarize(cl['cases']))}  →  {line('claude+codex', summarize(both))}")
+        # holdout の個別の当否は出さない(チェックリストの修正に使わないため)
+        print(f"    codex だけが当てたケース: dev {dev_only or 'なし'} / holdout {len(only) - len(dev_only)}件")
+    return 0
+
+
 def fresh(_):
     if not glob.glob(os.path.join(DATA, "cases", "*.json")):
         print("評価ケースなし(採点をスキップ)"); return 0
     ids = {json.load(open(p, encoding="utf8")).get("id") or os.path.splitext(os.path.basename(p))[0] for p in glob.glob(os.path.join(DATA, "cases", "*.json"))}
     # --only で一部だけ回した結果では配信の判断に使わない
+    # 配信の判断は claude の結果で行う(codex の結果は compare で比べるためのもの)
     results = [p for p in sorted(glob.glob(os.path.join(DATA, "results", "*.json")))
-               if {r["id"] for r in json.load(open(p, encoding="utf8"))["cases"]} >= ids]
+               if {r["id"] for r in json.load(open(p, encoding="utf8"))["cases"]} >= ids
+               and reviewer_of(json.load(open(p, encoding="utf8"))) == "claude"]
     rev = plugins_rev()
     last = json.load(open(results[-1], encoding="utf8")) if results else {}
-    if last.get("plugins_rev") == rev and same_conditions(last):
+    if last.get("plugins_rev") == rev and same_conditions(last, "claude"):
         print(f"最新の採点は今の plugins/ ({rev[:12]}) で実施済み"); return 0
     print(f"今の plugins/ ({rev[:12]}) で採点していない。`tools/eval.py run` を回して結果を確かめてから配信する(飛ばすなら SKIP_EVAL=1)")
     return 1
@@ -289,6 +380,7 @@ def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
+    r.add_argument("--reviewer", default="claude", choices=list(CONDITIONS))
     r.add_argument("--cases", default=os.path.join(DATA, "cases"))
     r.add_argument("--only", nargs="*")
     r.add_argument("--split", default="all", choices=SPLITS + ["all"])
@@ -299,6 +391,7 @@ def main():
     r.set_defaults(fn=run)
     sub.add_parser("fresh").set_defaults(fn=fresh)
     sub.add_parser("spread").set_defaults(fn=spread)
+    sub.add_parser("compare").set_defaults(fn=compare)
     a = ap.parse_args()
     sys.exit(a.fn(a))
 
