@@ -13,7 +13,7 @@ description: 同梱の /code-review を置き換える personal skill。差分�
 `[low|medium|high|xhigh|max] [PR番号 | PR URL | ブランチ | パス] [--fix] [--comment] [--max-findings <n>|all]`
 
 - effort を省略したら `high`。`low` / `medium` は P0/P1 だけ、`high` 以上は P2 まで出す。P3 は `max` か `--max-findings all` のときだけ出す。
-- `ultra` は同梱版の機能（クラウドでの多エージェントレビュー）なので、ここでは扱わない。`/review ultra` を使うよう1行返して終える。
+- `ultra` は同梱版の機能（クラウドでの多エージェントレビュー）なので、ここでは扱わない。`/code-review ultra` を使うよう1行返して終える。
 - 件数上限は既定 10。`--max-findings` で変える。
 
 ## 手順

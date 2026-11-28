@@ -1,6 +1,6 @@
 ---
 severity: P0 | P1 | P2 | P3
-domain: multi-tenancy | mobacal | metrics | nextjs | security | testing | error-handling
+domain: <固有設定の「domain 語彙」から1つ>
 source: claude | codex | human
 date: YYYY-MM-DD
 ---
@@ -27,7 +27,7 @@ date: YYYY-MM-DD
 
 ## 次回レビュー観点（本体）
 <次回の reviewer / 自分が確認すべきチェック項目を1〜2行で。
- 一般化できるなら docs/process/*-review-checklist.md の「## 候補」へ昇格する>
+ 一般化できるなら review-checklist skill の references、リポ固有なら固有設定の「還流先」の「## 候補」へ1行追記する>
 
 ## 関連
 - <関連する正本ドキュメント / チェックリスト項目へのリンク>

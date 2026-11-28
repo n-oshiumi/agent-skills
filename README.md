@@ -19,7 +19,7 @@ plugin 経由の skill は名前空間付き: `/review-workflow:review-checklist
 ## 中身
 
 - `review-checklist`: 言語・FW 非依存のレビューチェックリスト(`references/{severity,common,backend,frontend,infra,data,test,process}.md`、各 ≤12KB)。プロジェクト固有の不変条件は各リポ側に置く。
-- `review-driven-implement`: 準備 → 実装+テスト → 自己レビュー → 検証ゲート → 外部レビュー1回 → 完了報告のワークフロー。固有設定は各リポの `.claude/review-driven-implement.project.md`。
+- `review-driven-implement`: 準備 → 実装+テスト → Codex 外部レビュー1回 → 自己レビュー(今回の差分の P0-P2 = 0 まで) → 検証ゲート → 完了報告のワークフロー。固有設定は各リポの `.claude/review-driven-implement.project.md`。
 - `spec-design-multireview`(+ agent `spec-design-reviewer`): PRD・設計 Spec を 4 レンズ(リーン / 価値 / UX / 実現性)の並列サブエージェントで批判的にレビューし、P0/P1 ゼロまで収束させる。各リポの `/review-driven-spec` `/review-driven-design` `/spec-design` から呼ばれる。
 - `threat-coverage`: リポごとの「攻撃の種類ごとの対策状況」の表(`docs/reference/security-threat-coverage.md`)を作り、呼ぶたびに同梱の `template.md` の版へ ID 単位で同期する(`scripts/sync.mjs`)。記入済みの表は未修正の穴の一覧なので、各リポだけに置き、このリポには置かない。テンプレの変更は `CHANGES.md` に書く。
 
